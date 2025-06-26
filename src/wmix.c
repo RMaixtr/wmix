@@ -187,6 +187,7 @@ int SNDWAV_ReadPcm(SNDPCMContainer_t *sndpcm, size_t frame_num)
     size_t result = 0;
     size_t count = frame_num;
     uint8_t *data = sndpcm->data_buf;
+    uint8_t *temp_buf = (uint8_t *)malloc(count * 2 * 7 + 1);
 
     // if (count != sndpcm->chunk_size) {
     //     count = sndpcm->chunk_size;
@@ -194,7 +195,7 @@ int SNDWAV_ReadPcm(SNDPCMContainer_t *sndpcm, size_t frame_num)
 
     while (count > 0)
     {
-        ret = snd_pcm_readi(sndpcm->handle, data, count);
+        ret = snd_pcm_readi(sndpcm->handle, temp_buf, count);
         //返回异常,recover处理
         if (ret < 0) {
             ret = snd_pcm_recover(sndpcm->handle, ret, 0); // TODO 录音也有可能漏音，但目前来看还好，可以留意。
@@ -228,9 +229,24 @@ int SNDWAV_ReadPcm(SNDPCMContainer_t *sndpcm, size_t frame_num)
             result += ret;
             count -= ret;
             //按实际读取的帧数移动 uint8 数据指针
-            data += ret * sndpcm->bits_per_frame / 8;
+            temp_buf += ret * 2 * 7;
         }
     }
+    temp_buf -= result * 2 * 7;
+
+    for (size_t i = 0; i < result; i++) {
+        // 原始帧起始地址（7通道，每个样本2字节）
+        int16_t *src_frame = (int16_t *)(temp_buf + i * 2 * 7);
+
+        // 提取第4通道的样本
+        int16_t sample = src_frame[3];
+
+        // 写入目标buffer，写两个声道（L/R相同）
+        int16_t *dst_frame = (int16_t *)(data + i * 2 * 2);
+        dst_frame[0] = sample;  // 左声道
+        dst_frame[1] = sample;  // 右声道
+    }
+    free(temp_buf);
 
     return result;
 }
@@ -389,18 +405,25 @@ int SNDWAV_SetParams(SNDPCMContainer_t *sndpcm, uint16_t freq, uint8_t channels,
     if (buffer_time > 500000)
         buffer_time = 500000;
     period_time = buffer_time / 4;
+    // period_time = 64000;
 
-    if (snd_pcm_hw_params_set_buffer_time_near(sndpcm->handle, hwparams, &buffer_time, 0) < 0)
-    {
-        fprintf(stderr, "Error snd_pcm_hw_params_set_buffer_time_near\r\n");
+    snd_pcm_uframes_t buffer_size = 320;
+    if (snd_pcm_hw_params_set_buffer_size_near(sndpcm->handle, hwparams, &buffer_size) < 0) {
+        fprintf(stderr, "无法设置音频缓冲区大小\r\n");
         return -1;
     }
 
-    if (snd_pcm_hw_params_set_period_time_near(sndpcm->handle, hwparams, &period_time, 0) < 0)
-    {
-        fprintf(stderr, "Error snd_pcm_hw_params_set_period_time_near\r\n");
-        return -1;
-    }
+    // if (snd_pcm_hw_params_set_buffer_time_near(sndpcm->handle, hwparams, &buffer_time, 0) < 0)
+    // {
+    //     fprintf(stderr, "Error snd_pcm_hw_params_set_buffer_time_near\r\n");
+    //     return -1;
+    // }
+
+    // if (snd_pcm_hw_params_set_period_time_near(sndpcm->handle, hwparams, &period_time, 0) < 0)
+    // {
+    //     fprintf(stderr, "Error snd_pcm_hw_params_set_period_time_near\r\n");
+    //     return -1;
+    // }
 
     /* Set hw params */
     if (snd_pcm_hw_params(sndpcm->handle, hwparams) < 0)
@@ -409,13 +432,15 @@ int SNDWAV_SetParams(SNDPCMContainer_t *sndpcm, uint16_t freq, uint8_t channels,
         return -1;
     }
 
-    snd_pcm_hw_params_get_period_size(hwparams, &sndpcm->chunk_size, 0);
-    snd_pcm_hw_params_get_buffer_size(hwparams, &sndpcm->buffer_size);
-    if (sndpcm->chunk_size == sndpcm->buffer_size)
-    {
-        fprintf(stderr, "Can't use period equal to buffer size (%lu == %lu)\r\n", sndpcm->chunk_size, sndpcm->buffer_size);
-        return -1;
-    }
+    // snd_pcm_hw_params_get_period_size(hwparams, &sndpcm->chunk_size, 0);
+    // snd_pcm_hw_params_get_buffer_size(hwparams, &sndpcm->buffer_size);
+    // if (sndpcm->chunk_size == sndpcm->buffer_size)
+    // {
+    //     fprintf(stderr, "Can't use period equal to buffer size (%lu == %lu)\r\n", sndpcm->chunk_size, sndpcm->buffer_size);
+    //     return -1;
+    // }
+    sndpcm->chunk_size = 1024;
+    sndpcm->buffer_size = 4096;
 
     sndpcm->bits_per_sample = snd_pcm_format_physical_width(format);
     sndpcm->bits_per_frame = sndpcm->bits_per_sample * channels;
@@ -452,7 +477,8 @@ int SNDWAV_SetParams(SNDPCMContainer_t *sndpcm, uint16_t freq, uint8_t channels,
 
 SNDPCMContainer_t *wmix_alsa_init(uint8_t channels, uint8_t sample, uint16_t freq, char p_or_c)
 {
-    char devicename[] = "default";
+    // char devicename[] = "default";
+    printf("wmix_alsa_init: %d %d %d %c\r\n", channels, sample, freq, p_or_c);
 
     SNDPCMContainer_t *playback = (SNDPCMContainer_t *)calloc(1, sizeof(SNDPCMContainer_t));
 
@@ -463,20 +489,38 @@ SNDPCMContainer_t *wmix_alsa_init(uint8_t channels, uint8_t sample, uint16_t fre
         goto Err;
     }
     // 打开PCM，最后一个参数为0意味着标准配置 SND_PCM_ASYNC
-    if (snd_pcm_open(
-            &playback->handle,
-            devicename,
-            p_or_c == 'c' ? SND_PCM_STREAM_CAPTURE : SND_PCM_STREAM_PLAYBACK, 0) < 0)
-    {
-        fprintf(stderr, "Error snd_pcm_open [ %s]\r\n", devicename);
-        goto Err;
+    if (p_or_c == 'c'){
+        if (snd_pcm_open(
+                &playback->handle,
+                "hw:1,0",
+                SND_PCM_STREAM_CAPTURE, 0) < 0)
+        {
+            fprintf(stderr, "Error snd_pcm_open [ %s]\r\n", "hw:1,0");
+            goto Err;
+        }
+        //配置PCM参数
+        if (SNDWAV_SetParams(playback, freq, 7, sample) < 0)
+        {
+            fprintf(stderr, "Error set_snd_pcm_params\r\n");
+            goto Err;
+        }
+    }else{
+        if (snd_pcm_open(
+                &playback->handle,
+                "hw:0",
+                SND_PCM_STREAM_PLAYBACK, 0) < 0)
+        {
+            fprintf(stderr, "Error snd_pcm_open [ %s]\r\n", "default");
+            goto Err;
+        }
+        //配置PCM参数
+        if (SNDWAV_SetParams(playback, freq, 2, sample) < 0)
+        {
+            fprintf(stderr, "Error set_snd_pcm_params\r\n");
+            goto Err;
+        }
     }
-    //配置PCM参数
-    if (SNDWAV_SetParams(playback, freq, channels, sample) < 0)
-    {
-        fprintf(stderr, "Error set_snd_pcm_params\r\n");
-        goto Err;
-    }
+
     snd_pcm_dump(playback->handle, playback->log);
 
     return playback;
@@ -3185,7 +3229,7 @@ void wmix_play_thread(WMixThread_Param *wmtp)
                     tickT -= tick2;
                 //当实际运行环境比较忙,过大的延时可能导致播放卡顿
                 //通过调小 *0.8 值修复卡顿
-                delayus((unsigned int)(tickT * 0.8));
+                delayus((unsigned int)(tickT * 0.1));
             }
             tick1 = getTickUs();
 
@@ -3445,11 +3489,11 @@ WMix_Struct *wmix_init(void)
     wmix_throwOut_thread(wmix, 0, NULL, 0, &wmix_msg_thread);
     wmix_throwOut_thread(wmix, 0, NULL, 0, &wmix_play_thread);
 
-    wmix->webrtcEnable[WR_VAD] = 1;
-    wmix->webrtcEnable[WR_AEC] = 1;
-    wmix->webrtcEnable[WR_NS] = 1;
+    wmix->webrtcEnable[WR_VAD] = 0;
+    wmix->webrtcEnable[WR_AEC] = 0;
+    wmix->webrtcEnable[WR_NS] = 0;
     wmix->webrtcEnable[WR_NS_PA] = 0;
-    wmix->webrtcEnable[WR_AGC] = 1;
+    wmix->webrtcEnable[WR_AGC] = 0;
 
     printf("\n---- WMix info -----\r\n"
            "   chn: %d\r\n"
