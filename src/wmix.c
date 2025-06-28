@@ -3229,7 +3229,7 @@ void wmix_play_thread(WMixThread_Param *wmtp)
                     tickT -= tick2;
                 //当实际运行环境比较忙,过大的延时可能导致播放卡顿
                 //通过调小 *0.8 值修复卡顿
-                delayus((unsigned int)(tickT * 0.1));
+                // delayus((unsigned int)(tickT * 0.1));
             }
             tick1 = getTickUs();
 
