@@ -238,8 +238,8 @@ int SNDWAV_ReadPcm(SNDPCMContainer_t *sndpcm, size_t frame_num)
         // 原始帧起始地址（7通道，每个样本2字节）
         int16_t *src_frame = (int16_t *)(temp_buf + i * 2 * 7);
 
-        // 提取第4通道的样本
-        int16_t sample = src_frame[3];
+        // 提取第3通道的样本
+        int16_t sample = src_frame[2]; // 1, 2 mic 4 rec 7 aec
 
         // 写入目标buffer，写两个声道（L/R相同）
         int16_t *dst_frame = (int16_t *)(data + i * 2 * 2);
