@@ -58,6 +58,7 @@ void delayus(unsigned int us)
     select(0, NULL, NULL, NULL, &delay);
 }
 
+#define MAX_VOL 100
 /*******************************************************************************
  * 名称: wmix_volume
  * 功能: 扬声器音量设置
@@ -80,30 +81,30 @@ void wmix_volume(uint8_t value)
     else
         hiaudio_set_volume(5 - (10 - volume_value) * 5);
 #else
-    snd_mixer_t *mixer;
-    snd_mixer_elem_t *pcm_element;
+    // snd_mixer_t *mixer;
+    // snd_mixer_elem_t *pcm_element;
     long volume_value = value;
     //范围限制
-    if (volume_value > 10)
-        volume_value = 10;
+    if (volume_value > MAX_VOL)
+        volume_value = MAX_VOL;
     //
     if(main_wmix)
         main_wmix->volume = volume_value;
-    //初始化
-    snd_mixer_open(&mixer, 0);
-    snd_mixer_attach(mixer, "default");
-    snd_mixer_selem_register(mixer, NULL, NULL);
-    snd_mixer_load(mixer);
-    //找到Pcm对应的element
-    pcm_element = snd_mixer_first_elem(mixer);                     // 取得第一个 element，也就是 Master
-    snd_mixer_selem_set_playback_volume_range(pcm_element, 0, 10); // 设置音量范围：0-100之间
-    //设置左右声道音量
-    snd_mixer_selem_set_playback_volume_all(pcm_element, volume_value);
-    //检查设置
-    snd_mixer_selem_get_playback_volume(pcm_element, SND_MIXER_SCHN_FRONT_LEFT, &volume_value); //获取音量
-    //处理事件
-    snd_mixer_handle_events(mixer);
-    snd_mixer_close(mixer);
+    // //初始化
+    // snd_mixer_open(&mixer, 0);
+    // snd_mixer_attach(mixer, "default");
+    // snd_mixer_selem_register(mixer, NULL, NULL);
+    // snd_mixer_load(mixer);
+    // //找到Pcm对应的element
+    // pcm_element = snd_mixer_first_elem(mixer);                     // 取得第一个 element，也就是 Master
+    // snd_mixer_selem_set_playback_volume_range(pcm_element, 0, 10); // 设置音量范围：0-100之间
+    // //设置左右声道音量
+    // snd_mixer_selem_set_playback_volume_all(pcm_element, volume_value);
+    // //检查设置
+    // snd_mixer_selem_get_playback_volume(pcm_element, SND_MIXER_SCHN_FRONT_LEFT, &volume_value); //获取音量
+    // //处理事件
+    // snd_mixer_handle_events(mixer);
+    // snd_mixer_close(mixer);
 #endif
     printf("wmix volume playback: %ld\r\n", volume_value);
 }
@@ -251,6 +252,7 @@ int SNDWAV_ReadPcm(SNDPCMContainer_t *sndpcm, size_t frame_num)
     return result;
 }
 
+
 /*******************************************************************************
  * 名称: SNDWAV_WritePcm
  * 功能: wav文件数据写入pcm设备
@@ -266,6 +268,13 @@ int SNDWAV_WritePcm(SNDPCMContainer_t *sndpcm, size_t wcount)
     int result = 0;
     uint8_t *data = sndpcm->data_buf;
 
+    if(main_wmix){
+        float gain = main_wmix->volume / (float)MAX_VOL;
+        int16_t *pcm_data = (int16_t *)data;
+        for (size_t i = 0; i < wcount * sndpcm->channels; i++) {
+            pcm_data[i] = (int16_t)pcm_data[i] * gain;
+        }
+    }
     // if (wcount < sndpcm->chunk_size) {
     //     snd_pcm_format_set_silence(sndpcm->format,
     //         data + wcount * sndpcm->bits_per_frame / 8,
@@ -4668,7 +4677,7 @@ int main(int argc, char **argv)
     printf("%s:%d\r\n", __func__, __LINE__);
     system("killall arecord");
     system("killall aplay");
-    int i, volume = 10, volumeMic = 10;
+    int i, volume = MAX_VOL, volumeMic = 10;
     char *p, *path = NULL;
     //传入参数处理
     if (argc > 1)
