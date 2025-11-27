@@ -185,10 +185,11 @@ void wmix_volumeMic(uint8_t value)
 int SNDWAV_ReadPcm(SNDPCMContainer_t *sndpcm, size_t frame_num)
 {
     int ret;
+    uint8_t channel = 8;
     size_t result = 0;
     size_t count = frame_num;
     uint8_t *data = sndpcm->data_buf;
-    uint8_t *temp_buf = (uint8_t *)malloc(count * 2 * 7 + 1);
+    uint8_t *temp_buf = (uint8_t *)malloc(count * 2 * channel + 1);
 
     // if (count != sndpcm->chunk_size) {
     //     count = sndpcm->chunk_size;
@@ -230,17 +231,17 @@ int SNDWAV_ReadPcm(SNDPCMContainer_t *sndpcm, size_t frame_num)
             result += ret;
             count -= ret;
             //按实际读取的帧数移动 uint8 数据指针
-            temp_buf += ret * 2 * 7;
+            temp_buf += ret * 2 * channel;
         }
     }
-    temp_buf -= result * 2 * 7;
+    temp_buf -= result * 2 * channel;
 
     for (size_t i = 0; i < result; i++) {
         // 原始帧起始地址（7通道，每个样本2字节）
-        int16_t *src_frame = (int16_t *)(temp_buf + i * 2 * 7);
+        int16_t *src_frame = (int16_t *)(temp_buf + i * 2 * channel);
 
         // 提取第3通道的样本
-        int16_t sample = src_frame[2]; // 1, 2 mic 4 rec 7 aec
+        int16_t sample = src_frame[4]; // 1, 2 mic 4 rec 7 aec
 
         // 写入目标buffer，写两个声道（L/R相同）
         int16_t *dst_frame = (int16_t *)(data + i * 2 * 2);
